@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0E1320">
+<meta name="theme-color" content="#2347E6">
 <title>전기차 가계부</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -153,7 +153,7 @@ const persistLocal = () => { if (!API_URL) localStorage.setItem(LS_KEY, JSON.str
 function normalize(data) {
   state.vehicle = data.vehicle && data.vehicle.name !== undefined ? data.vehicle : null;
   for (const k of ['charges', 'subsidies', 'maintenance']) {
-    state[k] = (data[k] || []).map(r => ({ ...r, amount: Number(r.amount) || 0, kwh: Number(r.kwh) || 0, unitPrice: Number(r.unitPrice) || 0, month: r.month || String(r.date || '').slice(0, 7) }));
+    state[k] = (data[k] || []).map(r => ({ ...r, amount: Number(r.amount) || 0, kwh: Number(r.kwh) || 0, unitPrice: Number(r.unitPrice) || 0, odometer: Number(r.odometer) || 0, month: r.month || String(r.date || '').slice(0, 7) }));
   }
 }
 async function loadAll() {
@@ -227,31 +227,49 @@ const emptyBox = msg => `<div class="card text-center text-slate-400 py-8">${msg
 /* ---------- 헤더(차량 카드) ---------- */
 function renderHeader() {
   const v = state.vehicle;
-  const segs = v && v.battery ? Math.min(20, Math.max(1, Math.round(v.battery / 100 * 20))) : 0;   // 100kWh = 가득
-  const bar = Array.from({ length: 20 }, (_, i) => `<span class="h-2 flex-1 rounded-[2px] ${i < segs ? 'bg-cobalt-600' : 'bg-white/10'}"></span>`).join('');
-  const ibtn = (act, ic, label) => `<button data-act="${act}" aria-label="${label}" class="h-9 w-9 rounded-full bg-white/10 flex items-center justify-center text-white/80 active:bg-white/20">${icon(ic, 'w-[18px] h-[18px]')}</button>`;
+  // 이번 달 충전량을 배터리 용량과 비교: 1회분 = 가득 충전 1번. 막대는 가득 채운 횟수(×N)를 뺀 나머지 비율.
+  const cap = v ? Number(v.battery) || 0 : 0;
+  const kwhMonth = sum(state.charges.filter(r => r.month === today().slice(0, 7)), 'kwh');
+  const ratio = cap ? kwhMonth / cap : 0;
+  const full = Math.floor(ratio + 1e-9);
+  const frac = ratio - full;
+  const isFull = full >= 1 && frac < 0.005;
+  const segs = ratio <= 0 ? 0 : isFull ? 20 : Math.max(1, Math.round(frac * 20));
+  const pct = isFull ? 100 : Math.round(frac * 100);
+  const bar = Array.from({ length: 20 }, (_, i) => `<span class="h-2 flex-1 rounded-[2px] ${i < segs ? 'bg-[#7CF0FF]' : 'bg-white/20'}"></span>`).join('');
+  const odoMax = Math.max(0, ...state.charges.map(r => r.odometer || 0));   // 기록된 가장 큰 주행거리
+  const ibtn = (act, ic, label) => `<button data-act="${act}" aria-label="${label}" class="h-9 w-9 rounded-full bg-white/15 flex items-center justify-center text-white active:bg-white/25">${icon(ic, 'w-[18px] h-[18px]')}</button>`;
   $('#header').innerHTML = `
-  <div class="rounded-[20px] bg-ink text-white p-4">
+  <div class="rounded-[20px] bg-gradient-to-br from-[#2347E6] to-[#0D9BE0] text-white p-4">
     <div class="flex items-center justify-between gap-2">
-      <div class="flex items-center gap-1.5 text-xs text-white/60 min-w-0">${icon('user', 'w-3.5 h-3.5')}<span class="truncate">${esc(USER ? USER.name : '')}</span></div>
+      <div class="flex items-center gap-1.5 text-xs text-white/75 min-w-0">${icon('user', 'w-3.5 h-3.5')}<span class="truncate">${esc(USER ? USER.name : '')}</span></div>
       <div class="flex items-center gap-2">${ibtn('reload', 'refresh', '새로고침')}${API_URL ? ibtn('logout', 'logout', '로그아웃') : ''}</div>
     </div>
     ${v ? `
     <div class="mt-4">
       <div class="text-[22px] font-bold tracking-tight leading-tight">${esc(v.name)}</div>
-      ${v.grade ? `<div class="text-sm text-white/60 mt-0.5">${esc(v.grade)}</div>` : ''}
+      ${v.grade ? `<div class="text-sm text-white/75 mt-0.5">${esc(v.grade)}</div>` : ''}
     </div>
     <div class="mt-4 flex items-center justify-between gap-3">
       <span class="inline-flex items-center rounded-md bg-white text-ink px-2.5 py-1 text-[15px] font-extrabold tracking-wide">${esc(v.plate || '번호 미등록')}</span>
-      <span class="text-xs text-white/60">구매 ${esc(v.purchaseDate || '-')}</span>
+      <div class="text-right text-xs text-white/75 leading-snug"><div>구매 ${esc(v.purchaseDate || '-')}</div>${odoMax ? `<div>총 주행 <b class="text-white">${fmt(odoMax)} km</b></div>` : ''}</div>
     </div>
     <div class="mt-4">
-      <div class="flex items-baseline justify-between text-xs text-white/60 mb-1.5"><span>배터리 용량</span><span class="text-sm font-semibold text-white">${v.battery ? fmt(v.battery, 1) + ' kWh' : '-'}</span></div>
-      <div class="flex gap-[3px]">${bar}</div>
+      <div class="flex items-baseline justify-between text-xs text-white/75 mb-1.5">
+        <span>이번 달 충전 · 배터리 ${cap ? fmt(cap, 1) + 'kWh' : '-'}</span>
+        <span class="text-sm font-semibold text-white">${cap ? fmt(ratio, 1) + '회분' : ''}</span>
+      </div>
+      ${cap ? `
+      <div class="flex items-center gap-2">
+        ${full >= 1 ? `<span class="shrink-0 text-xs font-bold bg-white text-cobalt-700 rounded-md px-1.5 py-0.5">×${full}</span>` : ''}
+        <div class="flex gap-[3px] flex-1">${bar}</div>
+        <span class="shrink-0 text-xs text-white/80 w-9 text-right">${pct}%</span>
+      </div>
+      <div class="text-[11px] text-white/70 mt-1.5">${fmt(kwhMonth, 1)} kWh 충전</div>` : `<div class="text-[11px] text-white/70">차량 탭에서 배터리 용량을 입력하면 표시돼요</div>`}
     </div>` : `
     <div class="mt-4 text-lg font-bold">차량을 등록해 주세요</div>
-    <button data-act="tab" data-tab="vehicle" class="mt-3 h-10 px-4 rounded-xl bg-cobalt-600 text-white text-sm font-semibold">차량 등록하기</button>`}
-    ${API_URL ? '' : '<div class="mt-4 text-[11px] text-white/50">데모 모드 · 이 기기에만 저장돼요</div>'}
+    <button data-act="tab" data-tab="vehicle" class="mt-3 h-10 px-4 rounded-xl bg-white text-cobalt-700 text-sm font-semibold">차량 등록하기</button>`}
+    ${API_URL ? '' : '<div class="mt-4 text-[11px] text-white/60">데모 모드 · 이 기기에만 저장돼요</div>'}
   </div>`;
 }
 
@@ -352,7 +370,7 @@ function authView() {
   </form>`;
   return `
   <div class="pt-12 pb-5 text-center">
-    <div class="mx-auto w-14 h-14 rounded-2xl bg-ink text-white flex items-center justify-center">${icon('zap', 'w-7 h-7')}</div>
+    <div class="mx-auto w-14 h-14 rounded-2xl bg-gradient-to-br from-[#2347E6] to-[#0D9BE0] text-white flex items-center justify-center">${icon('zap', 'w-7 h-7')}</div>
     <h1 class="text-2xl font-bold tracking-tight mt-4">전기차 가계부</h1>
     <p class="text-sm text-slate-500 mt-1">로그인해야 기록할 수 있어요</p>
   </div>
@@ -388,6 +406,7 @@ function viewCharges() {
         <div><div class="text-xs text-slate-400">금액</div><b>${fmt(r.amount)}원</b></div>
         <div><div class="text-xs text-slate-400">단가</div><b>${fmt(r.unitPrice, 1)}원</b></div>
       </div>
+      ${r.odometer ? `<div class="mt-2 text-xs text-slate-500">총 주행거리 <b class="text-slate-700">${fmt(r.odometer)} km</b></div>` : ''}
       ${rowActions('charges', r.id)}
     </div>`).join('');
   return `
@@ -397,7 +416,7 @@ function viewCharges() {
       <div><label class="lbl">날짜</label><input type="date" name="date" class="inp" value="${esc(d.date)}" required></div>
       <div><label class="lbl">충전월</label><input type="text" id="c-month" class="inp bg-slate-100 text-slate-500" value="${esc(String(d.date).slice(0,7))}" readonly></div>
     </div>
-    <div><label class="lbl">충전기명</label><input type="text" name="station" class="inp" placeholder="예) 강남역 환경부 급속" value="${esc(d.station || '')}"></div>
+    <div><label class="lbl">충전기명 (충전소)</label><input type="text" name="station" class="inp" placeholder="예) 강남역 환경부 급속" value="${esc(d.station || '')}"></div>
     <div><label class="lbl">충전 회사명</label><input type="text" name="company" class="inp" placeholder="예) 환경부, 에버온, GS차지비" value="${esc(d.company || '')}"></div>
     <div><label class="lbl">충전 유형</label>${chips('type', ['급속', '완속'], d.type, 2)}</div>
     <div class="grid grid-cols-2 gap-2">
@@ -405,6 +424,8 @@ function viewCharges() {
       <div><label class="lbl">충전 금액 (원)</label><input type="number" name="amount" id="c-amount" class="inp" inputmode="numeric" step="any" min="0" value="${d.amount ?? ''}" required></div>
     </div>
     <div><label class="lbl">평균 단가 (원/kWh) · 자동 계산</label><input type="text" id="c-unit" class="inp bg-slate-100 text-slate-500" readonly value="${d.unitPrice ? fmt(d.unitPrice, 1) : ''}"></div>
+    <div><label class="lbl">충전 후 총 주행거리 (km) <span class="text-slate-400 font-normal">· 선택</span></label>
+      <input type="number" name="odometer" class="inp" inputmode="numeric" step="1" min="0" placeholder="계기판 숫자 · 모르면 비워두세요" value="${d.odometer || ''}"></div>
     ${formButtons('charges', !!e)}
   </form>
   ${listHeader('charges', '충전 내역')}
@@ -543,9 +564,16 @@ function submitLog(k, form) {
   if (k === 'charges') {
     const kwh = Number(fd.get('kwh'));
     if (!(kwh > 0)) return toast('충전량을 입력해 주세요', true);
+    const odoRaw = String(fd.get('odometer') || '').trim();
+    const odo = odoRaw === '' ? '' : Number(odoRaw);
+    if (odo !== '' && !(odo > 0 && odo <= 9999999)) return toast('총 주행거리를 확인해 주세요', true);
+    if (odo !== '') {   // 이전 기록보다 작으면 오타일 수 있어 한 번 확인
+      const prevMax = Math.max(0, ...state.charges.filter(r => r.id !== ui.editing.charges && r.odometer && String(r.date) <= date).map(r => r.odometer));
+      if (prevMax > odo && !confirm(`이전 기록(${fmt(prevMax)} km)보다 작아요. 그대로 저장할까요?`)) return;
+    }
     Object.assign(rec, {
       station: (fd.get('station') || '').trim(), company: (fd.get('company') || '').trim(),
-      type: fd.get('type'), kwh, unitPrice: Math.round(amount / kwh * 10) / 10
+      type: fd.get('type'), kwh, unitPrice: Math.round(amount / kwh * 10) / 10, odometer: odo
     });
   } else if (k === 'subsidies') {
     Object.assign(rec, { description: (fd.get('description') || '').trim(), type: fd.get('type') });
