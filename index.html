@@ -3,22 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#059669">
+<meta name="theme-color" content="#0E1320">
 <title>전기차 가계부</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  colors: { ink: '#0E1320', paper: '#F3F5F9', line: '#E2E7F0',
+            cobalt: { 50: '#EEF3FF', 100: '#DCE6FF', 600: '#2F5BFF', 700: '#2447D6' } },
+  fontFamily: { sans: ['"Pretendard Variable"', 'Pretendard', '-apple-system', 'BlinkMacSystemFont', '"Apple SD Gothic Neo"', '"Malgun Gothic"', 'sans-serif'] }
+} } };
+</script>
 <style type="text/tailwindcss">
   @layer components {
-    .inp  { @apply w-full h-12 px-3 rounded-xl border border-slate-300 bg-white text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500; }
+    .inp  { @apply w-full h-12 px-3 rounded-xl border border-slate-300 bg-white text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-cobalt-600/30 focus:border-cobalt-600; }
     .lbl  { @apply block text-sm font-medium text-slate-600 mb-1; }
     .btn  { @apply h-12 px-4 rounded-xl font-semibold text-base transition active:scale-[.98]; }
-    .card { @apply bg-white rounded-2xl shadow-sm p-4; }
+    .card { @apply bg-white rounded-[20px] border border-line p-4; }
     .btn-sm { @apply h-10 px-3 rounded-lg text-sm font-medium active:scale-[.97]; }
   }
-  body { -webkit-tap-highlight-color: transparent; }
+  body { -webkit-tap-highlight-color: transparent; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
   .safe-b { padding-bottom: env(safe-area-inset-bottom); }
 </style>
 </head>
-<body class="bg-slate-100 text-slate-800">
+<body class="bg-paper text-slate-900">
 
 <script>
 /* ============================================================
@@ -34,7 +42,7 @@ const API_URL   = 'https://script.google.com/macros/s/AKfycbwZUwznZWShD6JA2AgR5M
   <main id="view" class="px-4 pb-32 space-y-3"></main>
 </div>
 
-<nav id="nav" class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 safe-b z-20">
+<nav id="nav" class="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-line safe-b z-20">
   <div id="navInner" class="max-w-md mx-auto grid grid-cols-5"></div>
 </nav>
 
@@ -50,6 +58,22 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const fmt = (n, d = 0) => Number(n || 0).toLocaleString('ko-KR', { maximumFractionDigits: d });
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const IC = {
+  layout:  '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
+  zap:     '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  wallet:  '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
+  car:     '<path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/>',
+  wrench:  '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  logout:  '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  user:    '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  mail:    '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  pencil:  '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+  trash:   '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  left:    '<path d="m15 18-6-6 6-6"/>',
+  right:   '<path d="m9 18 6-6-6-6"/>'
+};
+const icon = (n, c = 'w-5 h-5') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" class="${c} shrink-0" aria-hidden="true">${IC[n]}</svg>`;
 const sum = (arr, k) => arr.reduce((a, b) => a + (Number(b[k]) || 0), 0);
 
 /* ---------- 상태 ---------- */
@@ -170,7 +194,7 @@ const chips = (name, opts, sel, cols) => `
     ${opts.map(o => `
       <label class="cursor-pointer">
         <input type="radio" name="${name}" value="${o}" class="peer sr-only" ${o === sel ? 'checked' : ''}>
-        <span class="flex items-center justify-center h-12 rounded-xl border border-slate-300 bg-white text-base font-medium text-slate-600 peer-checked:bg-emerald-600 peer-checked:border-emerald-600 peer-checked:text-white">${o}</span>
+        <span class="flex items-center justify-center h-12 rounded-xl border border-slate-300 bg-white text-base font-medium text-slate-600 peer-checked:bg-cobalt-600 peer-checked:border-cobalt-600 peer-checked:text-white">${o}</span>
       </label>`).join('')}
   </div>`;
 const sorted = k => [...state[k]].sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
@@ -184,56 +208,64 @@ function listHeader(k, label) {
       <label class="lbl">${label} 조회월</label>
       <input type="month" id="flt-${k}" class="inp" value="${ui.filter[k]}">
     </div>
-    <button data-act="fltclear" data-k="${k}" class="btn bg-slate-200 text-slate-700">전체</button>
+    <button data-act="fltclear" data-k="${k}" class="btn bg-white border border-slate-300 text-slate-700">전체</button>
   </div>
   <div class="text-sm text-slate-500 px-1">${list.length}건 · 합계 ${fmt(sum(list, 'amount'))}원${k === 'charges' ? ` · ${fmt(sum(list, 'kwh'), 1)}kWh` : ''}</div>`;
 }
 const rowActions = (k, id) => `
   <div class="flex gap-2 mt-3">
-    <button data-act="edit" data-k="${k}" data-id="${esc(id)}" class="btn-sm flex-1 bg-slate-100 text-slate-700">수정</button>
-    <button data-act="del"  data-k="${k}" data-id="${esc(id)}" class="btn-sm flex-1 bg-rose-50 text-rose-600">삭제</button>
+    <button data-act="edit" data-k="${k}" data-id="${esc(id)}" class="btn-sm flex-1 inline-flex items-center justify-center gap-1.5 bg-slate-100 text-slate-700">${icon('pencil', 'w-4 h-4')}수정</button>
+    <button data-act="del"  data-k="${k}" data-id="${esc(id)}" class="btn-sm flex-1 inline-flex items-center justify-center gap-1.5 bg-rose-50 text-rose-600">${icon('trash', 'w-4 h-4')}삭제</button>
   </div>`;
 const formButtons = (k, editing) => `
   <div class="flex gap-2 pt-1">
-    ${editing ? `<button type="button" data-act="cancel" data-k="${k}" class="btn bg-slate-200 text-slate-700 flex-1">취소</button>` : ''}
-    <button type="submit" class="btn bg-emerald-600 text-white flex-[2]">${editing ? '수정 저장' : '저장'}</button>
+    ${editing ? `<button type="button" data-act="cancel" data-k="${k}" class="btn bg-white border border-slate-300 text-slate-700 flex-1">취소</button>` : ''}
+    <button type="submit" class="btn bg-cobalt-600 text-white flex-[2]">${editing ? '수정 저장' : '저장'}</button>
   </div>`;
 const emptyBox = msg => `<div class="card text-center text-slate-400 py-8">${msg}</div>`;
 
 /* ---------- 헤더(차량 카드) ---------- */
 function renderHeader() {
   const v = state.vehicle;
+  const segs = v && v.battery ? Math.min(20, Math.max(1, Math.round(v.battery / 100 * 20))) : 0;   // 100kWh = 가득
+  const bar = Array.from({ length: 20 }, (_, i) => `<span class="h-2 flex-1 rounded-[2px] ${i < segs ? 'bg-cobalt-600' : 'bg-white/10'}"></span>`).join('');
+  const ibtn = (act, ic, label) => `<button data-act="${act}" aria-label="${label}" class="h-9 w-9 rounded-full bg-white/10 flex items-center justify-center text-white/80 active:bg-white/20">${icon(ic, 'w-[18px] h-[18px]')}</button>`;
   $('#header').innerHTML = `
-  <div class="rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white p-4 shadow">
-    <div class="flex items-start justify-between">
-      <div>
-        <div class="text-xs opacity-80">내 차량</div>
-        ${v ? `<div class="text-xl font-bold mt-0.5">${esc(v.name)} ${v.grade ? `<span class="text-sm font-medium opacity-90">${esc(v.grade)}</span>` : ''}</div>`
-            : `<div class="text-lg font-bold mt-0.5">차량을 등록해 주세요</div>`}
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="text-xs bg-white/20 rounded-full px-3 h-10 flex items-center max-w-[110px] truncate">👤 ${esc(USER ? USER.name : '')}</span>
-        ${API_URL ? '<button data-act="logout" class="h-10 px-3 rounded-full bg-white/20 text-sm font-semibold">로그아웃</button>' : ''}
-        <button data-act="reload" class="h-10 w-10 rounded-full bg-white/20 text-lg" aria-label="새로고침">↻</button>
-      </div>
+  <div class="rounded-[20px] bg-ink text-white p-4">
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-1.5 text-xs text-white/60 min-w-0">${icon('user', 'w-3.5 h-3.5')}<span class="truncate">${esc(USER ? USER.name : '')}</span></div>
+      <div class="flex items-center gap-2">${ibtn('reload', 'refresh', '새로고침')}${API_URL ? ibtn('logout', 'logout', '로그아웃') : ''}</div>
     </div>
     ${v ? `
-    <div class="grid grid-cols-3 gap-2 mt-3 text-sm">
-      <div class="bg-white/15 rounded-xl p-2"><div class="text-[11px] opacity-80">차량 번호</div><div class="font-semibold">${esc(v.plate || '-')}</div></div>
-      <div class="bg-white/15 rounded-xl p-2"><div class="text-[11px] opacity-80">배터리</div><div class="font-semibold">${v.battery ? fmt(v.battery, 1) + ' kWh' : '-'}</div></div>
-      <div class="bg-white/15 rounded-xl p-2"><div class="text-[11px] opacity-80">구매일</div><div class="font-semibold">${esc(v.purchaseDate || '-')}</div></div>
-    </div>` : `<button data-act="tab" data-tab="vehicle" class="btn-sm bg-white text-emerald-700 mt-3">차량 등록하기</button>`}
-    ${API_URL ? '' : '<div class="mt-3 text-[11px] bg-black/20 rounded-lg px-2 py-1">데모 모드 · 이 기기에만 저장됨 (API_URL 미설정)</div>'}
+    <div class="mt-4">
+      <div class="text-[22px] font-bold tracking-tight leading-tight">${esc(v.name)}</div>
+      ${v.grade ? `<div class="text-sm text-white/60 mt-0.5">${esc(v.grade)}</div>` : ''}
+    </div>
+    <div class="mt-4 flex items-center justify-between gap-3">
+      <span class="inline-flex items-center rounded-md bg-white text-ink px-2.5 py-1 text-[15px] font-extrabold tracking-wide">${esc(v.plate || '번호 미등록')}</span>
+      <span class="text-xs text-white/60">구매 ${esc(v.purchaseDate || '-')}</span>
+    </div>
+    <div class="mt-4">
+      <div class="flex items-baseline justify-between text-xs text-white/60 mb-1.5"><span>배터리 용량</span><span class="text-sm font-semibold text-white">${v.battery ? fmt(v.battery, 1) + ' kWh' : '-'}</span></div>
+      <div class="flex gap-[3px]">${bar}</div>
+    </div>` : `
+    <div class="mt-4 text-lg font-bold">차량을 등록해 주세요</div>
+    <button data-act="tab" data-tab="vehicle" class="mt-3 h-10 px-4 rounded-xl bg-cobalt-600 text-white text-sm font-semibold">차량 등록하기</button>`}
+    ${API_URL ? '' : '<div class="mt-4 text-[11px] text-white/50">데모 모드 · 이 기기에만 저장돼요</div>'}
   </div>`;
 }
 
 /* ---------- 하단 네비 ---------- */
-const TABS = [['dashboard','대시보드','📊'],['charges','충전','⚡'],['subsidies','지원금','💰'],['vehicle','차량','🚗'],['maintenance','정비','🔧']];
+const TABS = [['dashboard','대시보드','layout'],['charges','충전','zap'],['subsidies','지원금','wallet'],['vehicle','차량','car'],['maintenance','정비','wrench']];
 function renderNav() {
-  $('#navInner').innerHTML = TABS.map(([id, label, ic]) => `
-    <button data-act="tab" data-tab="${id}" class="h-16 flex flex-col items-center justify-center gap-0.5 ${ui.tab === id ? 'text-emerald-600 font-bold' : 'text-slate-400'}">
-      <span class="text-xl leading-none">${ic}</span><span class="text-[11px]">${label}</span>
-    </button>`).join('');
+  $('#navInner').innerHTML = TABS.map(([id, label, ic]) => {
+    const on = ui.tab === id;
+    return `
+    <button data-act="tab" data-tab="${id}" class="relative h-16 flex flex-col items-center justify-center gap-1 ${on ? 'text-cobalt-600' : 'text-slate-400'}">
+      ${on ? '<span class="absolute top-0 h-[3px] w-8 rounded-b-full bg-cobalt-600"></span>' : ''}
+      ${icon(ic, 'w-[22px] h-[22px]')}<span class="text-[11px] ${on ? 'font-bold' : 'font-medium'}">${label}</span>
+    </button>`;
+  }).join('');
 }
 
 /* ---------- 뷰: 대시보드 ---------- */
@@ -247,64 +279,67 @@ function viewDashboard() {
   const fast = ch.filter(r => r.type === '급속').length;
   const slow = ch.filter(r => r.type === '완속').length;
   const tSub = sum(sb, 'amount'), tMnt = sum(mt, 'amount');
-  const stat = (label, val) => `<div class="bg-slate-50 rounded-xl p-3"><div class="text-xs text-slate-500">${label}</div><div class="text-lg font-bold mt-0.5">${val}</div></div>`;
+  const head = (ic, tone, title, count) => `
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2.5"><span class="w-8 h-8 rounded-[10px] flex items-center justify-center ${tone}">${icon(ic, 'w-[18px] h-[18px]')}</span><h2 class="font-bold">${title}</h2></div>
+      <span class="text-xs text-slate-400">${count}건</span>
+    </div>`;
+  const big = (v, size) => `<div class="mt-4 flex items-baseline gap-1"><span class="${size} leading-none font-bold tracking-tight">${fmt(v)}</span><span class="text-base font-semibold text-slate-400">원</span></div>`;
+  const cell = (label, val, cls) => `<div class="${cls}"><dt class="text-xs text-slate-500">${label}</dt><dd class="text-[17px] font-bold mt-0.5">${val}</dd></div>`;
+  const dot = c => `<span class="inline-block w-2 h-2 rounded-full ${c} mr-1.5"></span>`;
   return `
-  <div class="card">
-    <div class="flex items-center gap-2">
-      <button data-act="mprev" class="btn bg-slate-100 w-12 px-0 text-xl">‹</button>
-      <input type="month" id="dash-month" class="inp text-center font-semibold" value="${m}">
-      <button data-act="mnext" class="btn bg-slate-100 w-12 px-0 text-xl">›</button>
-    </div>
+  <div class="bg-white rounded-[20px] border border-line p-2 flex items-center gap-2">
+    <button data-act="mprev" aria-label="이전 달" class="h-12 w-12 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">${icon('left')}</button>
+    <input type="month" id="dash-month" class="inp text-center font-semibold border-0 bg-transparent" value="${m}">
+    <button data-act="mnext" aria-label="다음 달" class="h-12 w-12 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">${icon('right')}</button>
   </div>
 
-  <div class="card">
-    <div class="flex items-center justify-between mb-3">
-      <h2 class="font-bold">⚡ 충전 요약</h2><span class="text-xs text-slate-400">${ch.length}건</span>
-    </div>
-    <div class="text-3xl font-extrabold text-emerald-600">${fmt(tAmt)}<span class="text-base font-semibold text-slate-500"> 원</span></div>
-    <div class="grid grid-cols-2 gap-2 mt-3">
-      ${stat('총 충전량', fmt(tKwh, 1) + ' kWh')}
-      ${stat('평균 단가', fmt(avg, 1) + ' 원/kWh')}
-      ${stat('급속 충전', fast + ' 회')}
-      ${stat('완속 충전', slow + ' 회')}
-    </div>
-  </div>
+  <section class="card">
+    ${head('zap', 'bg-cobalt-50 text-cobalt-600', '충전', ch.length)}
+    ${big(tAmt, 'text-[34px]')}
+    <dl class="mt-4 grid grid-cols-2 border-t border-line">
+      ${cell('총 충전량', fmt(tKwh, 1) + ' kWh', 'py-3 pr-3')}
+      ${cell('평균 단가', fmt(avg, 1) + ' 원/kWh', 'py-3 pl-4 border-l border-line')}
+      ${cell(dot('bg-amber-500') + '급속 충전', fast + '회', 'py-3 pr-3 border-t border-line')}
+      ${cell(dot('bg-cobalt-600') + '완속 충전', slow + '회', 'py-3 pl-4 border-l border-t border-line')}
+    </dl>
+  </section>
 
-  <div class="card">
-    <div class="flex items-center justify-between mb-2">
-      <h2 class="font-bold">💰 유류비 지원 요약</h2><span class="text-xs text-slate-400">${sb.length}건</span>
+  <section class="card">
+    ${head('wallet', 'bg-sky-50 text-sky-600', '유류비 지원', sb.length)}
+    ${big(tSub, 'text-[28px]')}
+    <div class="mt-4 pt-3 border-t border-line flex items-center justify-between text-sm">
+      <span class="text-slate-500">실질 충전비 (충전 − 지원)</span><b>${fmt(tAmt - tSub)}원</b>
     </div>
-    <div class="text-2xl font-extrabold text-sky-600">${fmt(tSub)}<span class="text-base font-semibold text-slate-500"> 원</span></div>
-    <div class="text-sm text-slate-500 mt-2">실질 충전비(충전 − 지원): <b class="text-slate-700">${fmt(tAmt - tSub)}원</b></div>
-  </div>
+  </section>
 
-  <div class="card">
-    <div class="flex items-center justify-between mb-2">
-      <h2 class="font-bold">🔧 정비·유지비 요약</h2><span class="text-xs text-slate-400">${mt.length}건</span>
-    </div>
-    <div class="text-2xl font-extrabold text-amber-600">${fmt(tMnt)}<span class="text-base font-semibold text-slate-500"> 원</span></div>
-  </div>
+  <section class="card">
+    ${head('wrench', 'bg-amber-50 text-amber-600', '정비·유지비', mt.length)}
+    ${big(tMnt, 'text-[28px]')}
+  </section>
 
   ${API_URL ? `
-  <div class="card">
-    <h2 class="font-bold mb-1">📧 내 자료 메일로 받기</h2>
-    <p class="text-xs text-slate-500 mb-3 break-all">${esc(USER && USER.email || '')} 로 요약, 내역 표, CSV 파일을 보내드려요</p>
-    <div class="grid grid-cols-2 gap-2">
-      <button data-act="report" data-scope="month" class="btn bg-emerald-600 text-white text-sm">${m}<br>자료 받기</button>
-      <button data-act="report" data-scope="all" class="btn bg-white border border-emerald-600 text-emerald-700 text-sm">전체 기간<br>자료 받기</button>
+  <section class="card">
+    <div class="flex items-center gap-2.5">
+      <span class="w-8 h-8 rounded-[10px] flex items-center justify-center bg-slate-100 text-slate-600">${icon('mail', 'w-[18px] h-[18px]')}</span>
+      <div class="min-w-0"><h2 class="font-bold leading-tight">내 자료 메일로 받기</h2><p class="text-xs text-slate-500 truncate">${esc(USER && USER.email || '')}</p></div>
     </div>
-  </div>` : ''}`;
+    <div class="grid grid-cols-2 gap-2 mt-3">
+      <button data-act="report" data-scope="month" class="btn bg-cobalt-600 text-white text-sm">${m} 자료</button>
+      <button data-act="report" data-scope="all" class="btn bg-white border border-slate-300 text-slate-700 text-sm">전체 기간</button>
+    </div>
+  </section>` : ''}`;
 }
 
 /* ---------- 뷰: 로그인 / 회원가입 ---------- */
 function authView() {
   const m = ui.authMode;
-  const tab = (id, label) => `<button type="button" data-act="authmode" data-mode="${id}" class="flex-1 h-11 rounded-lg font-semibold ${m === id ? 'bg-white shadow text-emerald-700' : 'text-slate-500'}">${label}</button>`;
+  const tab = (id, label) => `<button type="button" data-act="authmode" data-mode="${id}" class="flex-1 h-11 rounded-lg font-semibold ${m === id ? 'bg-white shadow text-cobalt-700' : 'text-slate-500'}">${label}</button>`;
   const login = `
   <form id="f-login" class="card space-y-3 mt-3">
     <div><label class="lbl">ID</label><input name="id" class="inp" maxlength="8" autocomplete="username" autocapitalize="none" autocorrect="off" required></div>
     <div><label class="lbl">패스워드 (숫자 4자리)</label><input type="password" name="pw" class="inp" inputmode="numeric" maxlength="4" autocomplete="current-password" required></div>
-    <button type="submit" class="btn bg-emerald-600 text-white w-full">로그인</button>
+    <button type="submit" class="btn bg-cobalt-600 text-white w-full">로그인</button>
   </form>`;
   const signup = `
   <form id="f-signup" class="card space-y-3 mt-3">
@@ -313,12 +348,12 @@ function authView() {
     <div><label class="lbl">메일 (리포트 받을 메일)</label><input type="email" name="email" class="inp" autocomplete="email" required></div>
     <div><label class="lbl">패스워드 (숫자 4자리)</label><input type="password" name="pw" class="inp" inputmode="numeric" maxlength="4" autocomplete="new-password" required></div>
     <div><label class="lbl">패스워드 확인</label><input type="password" name="pw2" class="inp" inputmode="numeric" maxlength="4" autocomplete="new-password" required></div>
-    <button type="submit" class="btn bg-emerald-600 text-white w-full">가입하기</button>
+    <button type="submit" class="btn bg-cobalt-600 text-white w-full">가입하기</button>
   </form>`;
   return `
-  <div class="pt-10 pb-4 text-center">
-    <div class="text-5xl">🚗⚡</div>
-    <h1 class="text-2xl font-extrabold mt-2">전기차 가계부</h1>
+  <div class="pt-12 pb-5 text-center">
+    <div class="mx-auto w-14 h-14 rounded-2xl bg-ink text-white flex items-center justify-center">${icon('zap', 'w-7 h-7')}</div>
+    <h1 class="text-2xl font-bold tracking-tight mt-4">전기차 가계부</h1>
     <p class="text-sm text-slate-500 mt-1">로그인해야 기록할 수 있어요</p>
   </div>
   <div class="bg-slate-200 rounded-xl p-1 flex gap-1">${tab('login', '로그인')}${tab('signup', '회원가입')}</div>
@@ -346,7 +381,7 @@ function viewCharges() {
           <div class="text-sm text-slate-500">${esc(r.date)}</div>
           <div class="font-semibold truncate">${esc(r.station || '-')} <span class="text-slate-400 font-normal">${esc(r.company || '')}</span></div>
         </div>
-        <span class="shrink-0 text-xs px-2 py-1 rounded-full ${r.type === '급속' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'}">${esc(r.type)}</span>
+        <span class="shrink-0 text-xs px-2 py-1 rounded-full ${r.type === '급속' ? 'bg-amber-100 text-amber-700' : 'bg-cobalt-50 text-cobalt-700'}">${esc(r.type)}</span>
       </div>
       <div class="grid grid-cols-3 gap-2 mt-2 text-sm">
         <div><div class="text-xs text-slate-400">충전량</div><b>${fmt(r.kwh, 2)} kWh</b></div>
@@ -389,7 +424,7 @@ function viewSubsidies() {
         </div>
         <span class="shrink-0 text-xs px-2 py-1 rounded-full bg-sky-100 text-sky-700">${esc(r.type)}</span>
       </div>
-      <div class="text-lg font-bold text-sky-600 mt-1">+${fmt(r.amount)}원</div>
+      <div class="text-lg font-bold text-sky-700 mt-1">+${fmt(r.amount)}원</div>
       ${rowActions('subsidies', r.id)}
     </div>`).join('');
   return `
@@ -421,7 +456,7 @@ function viewVehicle() {
       <div><label class="lbl">구매일</label><input type="date" name="purchaseDate" class="inp" value="${esc(v.purchaseDate || '')}"></div>
       <div><label class="lbl">배터리 (kWh)</label><input type="number" name="battery" class="inp" inputmode="decimal" step="any" min="0" value="${v.battery ?? ''}"></div>
     </div>
-    <button type="submit" class="btn bg-emerald-600 text-white w-full">저장</button>
+    <button type="submit" class="btn bg-cobalt-600 text-white w-full">저장</button>
   </form>`;
 }
 
@@ -435,7 +470,7 @@ function viewMaintenance() {
         <div class="text-sm text-slate-500">${esc(r.date)}</div>
         <span class="shrink-0 text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700">${esc(r.category)}</span>
       </div>
-      <div class="text-lg font-bold text-amber-600 mt-1">${fmt(r.amount)}원</div>
+      <div class="text-lg font-bold mt-1">${fmt(r.amount)}원</div>
       ${r.memo ? `<div class="text-sm text-slate-600 mt-1 whitespace-pre-wrap">${esc(r.memo)}</div>` : ''}
       ${rowActions('maintenance', r.id)}
     </div>`).join('');
