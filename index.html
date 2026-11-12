@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#059669">
+<title>전기차 가계부</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style type="text/tailwindcss">
+  @layer components {
+    .inp  { @apply w-full h-12 px-3 rounded-xl border border-slate-300 bg-white text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500; }
+    .lbl  { @apply block text-sm font-medium text-slate-600 mb-1; }
+    .btn  { @apply h-12 px-4 rounded-xl font-semibold text-base transition active:scale-[.98]; }
+    .card { @apply bg-white rounded-2xl shadow-sm p-4; }
+    .btn-sm { @apply h-10 px-3 rounded-lg text-sm font-medium active:scale-[.97]; }
+  }
+  body { -webkit-tap-highlight-color: transparent; }
+  .safe-b { padding-bottom: env(safe-area-inset-bottom); }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+
+<script>
+/* ============================================================
+   ⚙️ 설정: Google Apps Script 웹 앱 URL을 여기에 입력하세요.
+   예) const API_URL = 'https://script.google.com/macros/s/AKfycb.../exec';
+   비워두면 "데모 모드"로 동작하며 이 기기(브라우저)에만 저장됩니다.
+   ============================================================ */
+const API_URL   = 'https://script.google.com/macros/s/AKfycbwZUwznZWShD6JA2AgR5MC19XyPlTL03ZO1l-DkOgTTgR26JEJRKB1eQ7VB09nxBKHT/exec';
+</script>
+
+<div id="app" class="max-w-md mx-auto min-h-screen">
+  <header id="header" class="p-4 pb-2"></header>
+  <main id="view" class="px-4 pb-32 space-y-3"></main>
+</div>
+
+<nav id="nav" class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 safe-b z-20">
+  <div id="navInner" class="max-w-md mx-auto grid grid-cols-5"></div>
+</nav>
+
+<div id="loading" class="hidden fixed inset-0 bg-black/30 z-40 flex items-center justify-center">
+  <div class="bg-white rounded-2xl px-6 py-4 text-base font-medium shadow-lg">처리 중…</div>
+</div>
+<div id="toast" class="hidden fixed left-1/2 -translate-x-1/2 bottom-24 z-50 max-w-[90%] px-4 py-3 rounded-xl text-white text-sm shadow-lg"></div>
+
+<script>
+/* ---------- 유틸 ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (n, d = 0) => Number(n || 0).toLocaleString('ko-KR', { maximumFractionDigits: d });
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const sum = (arr, k) => arr.reduce((a, b) => a + (Number(b[k]) || 0), 0);
+
+/* ---------- 상태 ---------- */
+const LS_KEY = 'ev-ledger-v1';
+const SES_KEY = 'ev-ledger-session';
+let SESSION = '';                                   // 로그인 토큰
+let USER = API_URL ? null : { id: 'demo', name: '데모' };   // 데모 모드(API_URL 없음)는 로그인 없이 동작
+try { SESSION = localStorage.getItem(SES_KEY) || ''; } catch (e) {}
+const needLogin = () => !!API_URL && !USER;
+const state = { vehicle: null, charges: [], subsidies: [], maintenance: [] };
+const ui = {
+  tab: 'dashboard',
+  month: today().slice(0, 7),
+  authMode: 'login',
+  filter: { charges: '', subsidies: '', maintenance: '' },
+  editing: { charges: null, subsidies: null, maintenance: null }
+};
+const SUBSIDY_TYPES = ['회사 지원금', '카드 캐쉬백', '정부 지원금', '기타'];
+const MAINT_TYPES   = ['타이어', '오일류', '에어컨 필터', '기타 부품'];
+
+/* ---------- API (Google Apps Script) ---------- */
+async function apiCall(body) {
+  const r = await fetch(API_URL, {                  // 모든 요청은 POST (text/plain → CORS preflight 회피)
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ ...body, token: SESSION })
+  });
+  let j;
+  try { j = await r.json(); } catch (e) { throw new Error('서버 응답을 읽을 수 없어요. 배포 설정을 확인해 주세요'); }
+  if (!j.ok) { const e = new Error(j.error || '요청 실패'); e.code = j.code; throw e; }
+  return j;
+}
+async function apiGetAll() {
+  if (!API_URL) { const raw = localStorage.getItem(LS_KEY); return raw ? JSON.parse(raw) : {}; }
+  return apiCall({ action: 'getAll' });
+}
+async function apiPost(body) {
+  if (!API_URL) return { ok: true };
+  return apiCall(body);
+}
+
+/* ---------- 로그인 / 회원가입 ---------- */
+function setSession(token, user) {
+  SESSION = token; USER = user;
+  try { localStorage.setItem(SES_KEY, token); } catch (e) {}
+}
+function clearSession() {
+  SESSION = ''; USER = null;
+  try { localStorage.removeItem(SES_KEY); } catch (e) {}
+  state.vehicle = null; state.charges = []; state.subsidies = []; state.maintenance = [];
+  ui.tab = 'dashboard';
+}
+async function authSubmit(mode, form) {
+  const fd = new FormData(form);
+  const id = (fd.get('id') || '').trim(), pw = fd.get('pw') || '';
+  if (!/^[a-z0-9]{4,8}$/.test(id)) return toast('ID는 영문 소문자·숫자 4~8자예요', true);
+  if (!/^\d{4}$/.test(pw)) return toast('패스워드는 숫자 4자리예요', true);
+  let body = { action: 'login', id, pw };
+  if (mode === 'signup') {
+    const name = (fd.get('name') || '').trim(), email = (fd.get('email') || '').trim();
+    if (!name) return toast('이름을 입력해 주세요', true);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast('메일 주소를 확인해 주세요', true);
+    if (pw !== fd.get('pw2')) return toast('패스워드 확인이 일치하지 않아요', true);
+    body = { action: 'signup', name, id, email, pw };
+  }
+  showLoading(true);
+  try {
+    const j = await apiCall(body);
+    setSession(j.token, j.user);
+    toast(mode === 'signup' ? '가입이 완료되었어요' : j.user.name + '님 환영해요');
+  } catch (e) { showLoading(false); return toast('⚠ ' + e.message, true); }
+  showLoading(false);
+  await loadAll();
+}
+const persistLocal = () => { if (!API_URL) localStorage.setItem(LS_KEY, JSON.stringify(state)); };
+
+function normalize(data) {
+  state.vehicle = data.vehicle && data.vehicle.name !== undefined ? data.vehicle : null;
+  for (const k of ['charges', 'subsidies', 'maintenance']) {
+    state[k] = (data[k] || []).map(r => ({ ...r, amount: Number(r.amount) || 0, kwh: Number(r.kwh) || 0, unitPrice: Number(r.unitPrice) || 0, month: r.month || String(r.date || '').slice(0, 7) }));
+  }
+}
+async function loadAll() {
+  if (API_URL && !SESSION) { render(); return; }
+  showLoading(true);
+  try {
+    const j = await apiGetAll();
+    if (API_URL) USER = j.user;
+    normalize(j);
+  }
+  catch (e) {
+    if (e.code === 'AUTH') { clearSession(); toast('다시 로그인해 주세요', true); }
+    else toast('⚠ ' + e.message, true);
+  }
+  finally { showLoading(false); render(); }
+}
+async function run(fn, okMsg) {
+  showLoading(true);
+  try { await fn(); persistLocal(); if (okMsg) toast(okMsg); showLoading(false); render(); }
+  catch (e) {
+    showLoading(false); toast('⚠ ' + e.message, true);
+    if (e.code === 'AUTH') { clearSession(); render(); }
+  }
+}
+
+/* ---------- UI 헬퍼 ---------- */
+function showLoading(on) { $('#loading').classList.toggle('hidden', !on); }
+let toastTimer;
+function toast(msg, bad) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'fixed left-1/2 -translate-x-1/2 bottom-24 z-50 max-w-[90%] px-4 py-3 rounded-xl text-white text-sm shadow-lg ' + (bad ? 'bg-rose-600' : 'bg-slate-800');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), 2500);
+}
+const chips = (name, opts, sel, cols) => `
+  <div class="grid grid-cols-${cols} gap-2">
+    ${opts.map(o => `
+      <label class="cursor-pointer">
+        <input type="radio" name="${name}" value="${o}" class="peer sr-only" ${o === sel ? 'checked' : ''}>
+        <span class="flex items-center justify-center h-12 rounded-xl border border-slate-300 bg-white text-base font-medium text-slate-600 peer-checked:bg-emerald-600 peer-checked:border-emerald-600 peer-checked:text-white">${o}</span>
+      </label>`).join('')}
+  </div>`;
+const sorted = k => [...state[k]].sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+const filtered = k => sorted(k).filter(r => !ui.filter[k] || r.month === ui.filter[k]);
+
+function listHeader(k, label) {
+  const list = filtered(k);
+  return `
+  <div class="flex items-end gap-2 pt-2">
+    <div class="flex-1">
+      <label class="lbl">${label} 조회월</label>
+      <input type="month" id="flt-${k}" class="inp" value="${ui.filter[k]}">
+    </div>
+    <button data-act="fltclear" data-k="${k}" class="btn bg-slate-200 text-slate-700">전체</button>
+  </div>
+  <div class="text-sm text-slate-500 px-1">${list.length}건 · 합계 ${fmt(sum(list, 'amount'))}원${k === 'charges' ? ` · ${fmt(sum(list, 'kwh'), 1)}kWh` : ''}</div>`;
+}
+const rowActions = (k, id) => `
+  <div class="flex gap-2 mt-3">
+    <button data-act="edit" data-k="${k}" data-id="${esc(id)}" class="btn-sm flex-1 bg-slate-100 text-slate-700">수정</button>
+    <button data-act="del"  data-k="${k}" data-id="${esc(id)}" class="btn-sm flex-1 bg-rose-50 text-rose-600">삭제</button>
+  </div>`;
+const formButtons = (k, editing) => `
+  <div class="flex gap-2 pt-1">
+    ${editing ? `<button type="button" data-act="cancel" data-k="${k}" class="btn bg-slate-200 text-slate-700 flex-1">취소</button>` : ''}
+    <button type="submit" class="btn bg-emerald-600 text-white flex-[2]">${editing ? '수정 저장' : '저장'}</button>
+  </div>`;
+const emptyBox = msg => `<div class="card text-center text-slate-400 py-8">${msg}</div>`;
+
+/* ---------- 헤더(차량 카드) ---------- */
+function renderHeader() {
+  const v = state.vehicle;
+  $('#header').innerHTML = `
+  <div class="rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white p-4 shadow">
+    <div class="flex items-start justify-between">
+      <div>
+        <div class="text-xs opacity-80">내 차량</div>
+        ${v ? `<div class="text-xl font-bold mt-0.5">${esc(v.name)} ${v.grade ? `<span class="text-sm font-medium opacity-90">${esc(v.grade)}</span>` : ''}</div>`
+            : `<div class="text-lg font-bold mt-0.5">차량을 등록해 주세요</div>`}
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs bg-white/20 rounded-full px-3 h-10 flex items-center max-w-[110px] truncate">👤 ${esc(USER ? USER.name : '')}</span>
+        ${API_URL ? '<button data-act="logout" class="h-10 px-3 rounded-full bg-white/20 text-sm font-semibold">로그아웃</button>' : ''}
+        <button data-act="reload" class="h-10 w-10 rounded-full bg-white/20 text-lg" aria-label="새로고침">↻</button>
+      </div>
+    </div>
+    ${v ? `
+    <div class="grid grid-cols-3 gap-2 mt-3 text-sm">
+      <div class="bg-white/15 rounded-xl p-2"><div class="text-[11px] opacity-80">차량 번호</div><div class="font-semibold">${esc(v.plate || '-')}</div></div>
+      <div class="bg-white/15 rounded-xl p-2"><div class="text-[11px] opacity-80">배터리</div><div class="font-semibold">${v.battery ? fmt(v.battery, 1) + ' kWh' : '-'}</div></div>
+      <div class="bg-white/15 rounded-xl p-2"><div class="text-[11px] opacity-80">구매일</div><div class="font-semibold">${esc(v.purchaseDate || '-')}</div></div>
+    </div>` : `<button data-act="tab" data-tab="vehicle" class="btn-sm bg-white text-emerald-700 mt-3">차량 등록하기</button>`}
+    ${API_URL ? '' : '<div class="mt-3 text-[11px] bg-black/20 rounded-lg px-2 py-1">데모 모드 · 이 기기에만 저장됨 (API_URL 미설정)</div>'}
+  </div>`;
+}
+
+/* ---------- 하단 네비 ---------- */
+const TABS = [['dashboard','대시보드','📊'],['charges','충전','⚡'],['subsidies','지원금','💰'],['vehicle','차량','🚗'],['maintenance','정비','🔧']];
+function renderNav() {
+  $('#navInner').innerHTML = TABS.map(([id, label, ic]) => `
+    <button data-act="tab" data-tab="${id}" class="h-16 flex flex-col items-center justify-center gap-0.5 ${ui.tab === id ? 'text-emerald-600 font-bold' : 'text-slate-400'}">
+      <span class="text-xl leading-none">${ic}</span><span class="text-[11px]">${label}</span>
+    </button>`).join('');
+}
+
+/* ---------- 뷰: 대시보드 ---------- */
+function viewDashboard() {
+  const m = ui.month;
+  const ch = state.charges.filter(r => r.month === m);
+  const sb = state.subsidies.filter(r => r.month === m);
+  const mt = state.maintenance.filter(r => r.month === m);
+  const tAmt = sum(ch, 'amount'), tKwh = sum(ch, 'kwh');
+  const avg = tKwh ? tAmt / tKwh : 0;
+  const fast = ch.filter(r => r.type === '급속').length;
+  const slow = ch.filter(r => r.type === '완속').length;
+  const tSub = sum(sb, 'amount'), tMnt = sum(mt, 'amount');
+  const stat = (label, val) => `<div class="bg-slate-50 rounded-xl p-3"><div class="text-xs text-slate-500">${label}</div><div class="text-lg font-bold mt-0.5">${val}</div></div>`;
+  return `
+  <div class="card">
+    <div class="flex items-center gap-2">
+      <button data-act="mprev" class="btn bg-slate-100 w-12 px-0 text-xl">‹</button>
+      <input type="month" id="dash-month" class="inp text-center font-semibold" value="${m}">
+      <button data-act="mnext" class="btn bg-slate-100 w-12 px-0 text-xl">›</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-bold">⚡ 충전 요약</h2><span class="text-xs text-slate-400">${ch.length}건</span>
+    </div>
+    <div class="text-3xl font-extrabold text-emerald-600">${fmt(tAmt)}<span class="text-base font-semibold text-slate-500"> 원</span></div>
+    <div class="grid grid-cols-2 gap-2 mt-3">
+      ${stat('총 충전량', fmt(tKwh, 1) + ' kWh')}
+      ${stat('평균 단가', fmt(avg, 1) + ' 원/kWh')}
+      ${stat('급속 충전', fast + ' 회')}
+      ${stat('완속 충전', slow + ' 회')}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="font-bold">💰 유류비 지원 요약</h2><span class="text-xs text-slate-400">${sb.length}건</span>
+    </div>
+    <div class="text-2xl font-extrabold text-sky-600">${fmt(tSub)}<span class="text-base font-semibold text-slate-500"> 원</span></div>
+    <div class="text-sm text-slate-500 mt-2">실질 충전비(충전 − 지원): <b class="text-slate-700">${fmt(tAmt - tSub)}원</b></div>
+  </div>
+
+  <div class="card">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="font-bold">🔧 정비·유지비 요약</h2><span class="text-xs text-slate-400">${mt.length}건</span>
+    </div>
+    <div class="text-2xl font-extrabold text-amber-600">${fmt(tMnt)}<span class="text-base font-semibold text-slate-500"> 원</span></div>
+  </div>
+
+  ${API_URL ? `
+  <div class="card">
+    <h2 class="font-bold mb-1">📧 내 자료 메일로 받기</h2>
+    <p class="text-xs text-slate-500 mb-3 break-all">${esc(USER && USER.email || '')} 로 요약, 내역 표, CSV 파일을 보내드려요</p>
+    <div class="grid grid-cols-2 gap-2">
+      <button data-act="report" data-scope="month" class="btn bg-emerald-600 text-white text-sm">${m}<br>자료 받기</button>
+      <button data-act="report" data-scope="all" class="btn bg-white border border-emerald-600 text-emerald-700 text-sm">전체 기간<br>자료 받기</button>
+    </div>
+  </div>` : ''}`;
+}
+
+/* ---------- 뷰: 로그인 / 회원가입 ---------- */
+function authView() {
+  const m = ui.authMode;
+  const tab = (id, label) => `<button type="button" data-act="authmode" data-mode="${id}" class="flex-1 h-11 rounded-lg font-semibold ${m === id ? 'bg-white shadow text-emerald-700' : 'text-slate-500'}">${label}</button>`;
+  const login = `
+  <form id="f-login" class="card space-y-3 mt-3">
+    <div><label class="lbl">ID</label><input name="id" class="inp" maxlength="8" autocomplete="username" autocapitalize="none" autocorrect="off" required></div>
+    <div><label class="lbl">패스워드 (숫자 4자리)</label><input type="password" name="pw" class="inp" inputmode="numeric" maxlength="4" autocomplete="current-password" required></div>
+    <button type="submit" class="btn bg-emerald-600 text-white w-full">로그인</button>
+  </form>`;
+  const signup = `
+  <form id="f-signup" class="card space-y-3 mt-3">
+    <div><label class="lbl">이름</label><input name="name" class="inp" maxlength="20" autocomplete="name" required></div>
+    <div><label class="lbl">ID (영문 소문자·숫자 4~8자)</label><input name="id" class="inp" maxlength="8" autocomplete="username" autocapitalize="none" autocorrect="off" required></div>
+    <div><label class="lbl">메일 (리포트 받을 메일)</label><input type="email" name="email" class="inp" autocomplete="email" required></div>
+    <div><label class="lbl">패스워드 (숫자 4자리)</label><input type="password" name="pw" class="inp" inputmode="numeric" maxlength="4" autocomplete="new-password" required></div>
+    <div><label class="lbl">패스워드 확인</label><input type="password" name="pw2" class="inp" inputmode="numeric" maxlength="4" autocomplete="new-password" required></div>
+    <button type="submit" class="btn bg-emerald-600 text-white w-full">가입하기</button>
+  </form>`;
+  return `
+  <div class="pt-10 pb-4 text-center">
+    <div class="text-5xl">🚗⚡</div>
+    <h1 class="text-2xl font-extrabold mt-2">전기차 가계부</h1>
+    <p class="text-sm text-slate-500 mt-1">로그인해야 기록할 수 있어요</p>
+  </div>
+  <div class="bg-slate-200 rounded-xl p-1 flex gap-1">${tab('login', '로그인')}${tab('signup', '회원가입')}</div>
+  ${m === 'login' ? login : signup}`;
+}
+function bindAuth() {
+  document.querySelectorAll('#view input[name=pw], #view input[name=pw2]').forEach(i =>
+    i.addEventListener('input', () => { i.value = i.value.replace(/\D/g, '').slice(0, 4); }));
+  document.querySelectorAll('#view input[name=id]').forEach(i =>
+    i.addEventListener('input', () => { i.value = i.value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8); }));
+  for (const mode of ['login', 'signup']) {
+    const f = $('#f-' + mode);
+    if (f) f.addEventListener('submit', ev => { ev.preventDefault(); authSubmit(mode, f); });
+  }
+}
+
+/* ---------- 뷰: 충전 기록 ---------- */
+function viewCharges() {
+  const e = state.charges.find(r => r.id === ui.editing.charges);
+  const d = e || { date: today(), type: '급속' };
+  const items = filtered('charges').map(r => `
+    <div class="card">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="text-sm text-slate-500">${esc(r.date)}</div>
+          <div class="font-semibold truncate">${esc(r.station || '-')} <span class="text-slate-400 font-normal">${esc(r.company || '')}</span></div>
+        </div>
+        <span class="shrink-0 text-xs px-2 py-1 rounded-full ${r.type === '급속' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'}">${esc(r.type)}</span>
+      </div>
+      <div class="grid grid-cols-3 gap-2 mt-2 text-sm">
+        <div><div class="text-xs text-slate-400">충전량</div><b>${fmt(r.kwh, 2)} kWh</b></div>
+        <div><div class="text-xs text-slate-400">금액</div><b>${fmt(r.amount)}원</b></div>
+        <div><div class="text-xs text-slate-400">단가</div><b>${fmt(r.unitPrice, 1)}원</b></div>
+      </div>
+      ${rowActions('charges', r.id)}
+    </div>`).join('');
+  return `
+  <form id="f-charges" class="card space-y-3" autocomplete="off">
+    <h2 class="font-bold">${e ? '충전 기록 수정' : '충전 기록 추가'}</h2>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="lbl">날짜</label><input type="date" name="date" class="inp" value="${esc(d.date)}" required></div>
+      <div><label class="lbl">충전월</label><input type="text" id="c-month" class="inp bg-slate-100 text-slate-500" value="${esc(String(d.date).slice(0,7))}" readonly></div>
+    </div>
+    <div><label class="lbl">충전기명</label><input type="text" name="station" class="inp" placeholder="예) 강남역 환경부 급속" value="${esc(d.station || '')}"></div>
+    <div><label class="lbl">충전 회사명</label><input type="text" name="company" class="inp" placeholder="예) 환경부, 에버온, GS차지비" value="${esc(d.company || '')}"></div>
+    <div><label class="lbl">충전 유형</label>${chips('type', ['급속', '완속'], d.type, 2)}</div>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="lbl">충전량 (kWh)</label><input type="number" name="kwh" id="c-kwh" class="inp" inputmode="decimal" step="any" min="0" value="${d.kwh ?? ''}" required></div>
+      <div><label class="lbl">충전 금액 (원)</label><input type="number" name="amount" id="c-amount" class="inp" inputmode="numeric" step="any" min="0" value="${d.amount ?? ''}" required></div>
+    </div>
+    <div><label class="lbl">평균 단가 (원/kWh) · 자동 계산</label><input type="text" id="c-unit" class="inp bg-slate-100 text-slate-500" readonly value="${d.unitPrice ? fmt(d.unitPrice, 1) : ''}"></div>
+    ${formButtons('charges', !!e)}
+  </form>
+  ${listHeader('charges', '충전 내역')}
+  ${items || emptyBox('충전 기록이 없습니다')}`;
+}
+
+/* ---------- 뷰: 유류비/충전 지원금 ---------- */
+function viewSubsidies() {
+  const e = state.subsidies.find(r => r.id === ui.editing.subsidies);
+  const d = e || { date: today(), type: SUBSIDY_TYPES[0] };
+  const items = filtered('subsidies').map(r => `
+    <div class="card">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="text-sm text-slate-500">${esc(r.date)}</div>
+          <div class="font-semibold">${esc(r.description || '-')}</div>
+        </div>
+        <span class="shrink-0 text-xs px-2 py-1 rounded-full bg-sky-100 text-sky-700">${esc(r.type)}</span>
+      </div>
+      <div class="text-lg font-bold text-sky-600 mt-1">+${fmt(r.amount)}원</div>
+      ${rowActions('subsidies', r.id)}
+    </div>`).join('');
+  return `
+  <form id="f-subsidies" class="card space-y-3" autocomplete="off">
+    <h2 class="font-bold">${e ? '지원금 수정' : '지원금 기록 추가'}</h2>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="lbl">날짜</label><input type="date" name="date" class="inp" value="${esc(d.date)}" required></div>
+      <div><label class="lbl">지원월</label><input type="text" id="s-month" class="inp bg-slate-100 text-slate-500" value="${esc(String(d.date).slice(0,7))}" readonly></div>
+    </div>
+    <div><label class="lbl">지원 내용</label><input type="text" name="description" class="inp" placeholder="예) 11월 유류비 지원" value="${esc(d.description || '')}"></div>
+    <div><label class="lbl">지원 유형</label>${chips('type', SUBSIDY_TYPES, d.type, 2)}</div>
+    <div><label class="lbl">지원 금액 (원)</label><input type="number" name="amount" class="inp" inputmode="numeric" step="any" min="0" value="${d.amount ?? ''}" required></div>
+    ${formButtons('subsidies', !!e)}
+  </form>
+  ${listHeader('subsidies', '지원 내역')}
+  ${items || emptyBox('지원 내역이 없습니다')}`;
+}
+
+/* ---------- 뷰: 차량 정보 ---------- */
+function viewVehicle() {
+  const v = state.vehicle || {};
+  return `
+  <form id="f-vehicle" class="card space-y-3" autocomplete="off">
+    <h2 class="font-bold">${state.vehicle ? '차량 정보 수정' : '차량 등록'}</h2>
+    <div><label class="lbl">차량명</label><input type="text" name="name" class="inp" placeholder="예) 아이오닉 5" value="${esc(v.name || '')}" required></div>
+    <div><label class="lbl">등급</label><input type="text" name="grade" class="inp" placeholder="예) 롱레인지 익스클루시브" value="${esc(v.grade || '')}"></div>
+    <div><label class="lbl">차량 번호</label><input type="text" name="plate" class="inp" placeholder="예) 123가 4567" value="${esc(v.plate || '')}"></div>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="lbl">구매일</label><input type="date" name="purchaseDate" class="inp" value="${esc(v.purchaseDate || '')}"></div>
+      <div><label class="lbl">배터리 (kWh)</label><input type="number" name="battery" class="inp" inputmode="decimal" step="any" min="0" value="${v.battery ?? ''}"></div>
+    </div>
+    <button type="submit" class="btn bg-emerald-600 text-white w-full">저장</button>
+  </form>`;
+}
+
+/* ---------- 뷰: 유지비/정비 ---------- */
+function viewMaintenance() {
+  const e = state.maintenance.find(r => r.id === ui.editing.maintenance);
+  const d = e || { date: today(), category: MAINT_TYPES[0] };
+  const items = filtered('maintenance').map(r => `
+    <div class="card">
+      <div class="flex items-start justify-between gap-2">
+        <div class="text-sm text-slate-500">${esc(r.date)}</div>
+        <span class="shrink-0 text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700">${esc(r.category)}</span>
+      </div>
+      <div class="text-lg font-bold text-amber-600 mt-1">${fmt(r.amount)}원</div>
+      ${r.memo ? `<div class="text-sm text-slate-600 mt-1 whitespace-pre-wrap">${esc(r.memo)}</div>` : ''}
+      ${rowActions('maintenance', r.id)}
+    </div>`).join('');
+  return `
+  <form id="f-maintenance" class="card space-y-3" autocomplete="off">
+    <h2 class="font-bold">${e ? '유지비 수정' : '유지비 기록 추가'}</h2>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="lbl">날짜</label><input type="date" name="date" class="inp" value="${esc(d.date)}" required></div>
+      <div><label class="lbl">정비월</label><input type="text" id="m-month" class="inp bg-slate-100 text-slate-500" value="${esc(String(d.date).slice(0,7))}" readonly></div>
+    </div>
+    <div><label class="lbl">구분</label>${chips('category', MAINT_TYPES, d.category, 2)}</div>
+    <div><label class="lbl">지출 금액 (원)</label><input type="number" name="amount" class="inp" inputmode="numeric" step="any" min="0" value="${d.amount ?? ''}" required></div>
+    <div><label class="lbl">상세 구매 내역</label><textarea name="memo" rows="3" class="inp h-auto py-2" placeholder="예) 미쉐린 타이어 4본 교체">${esc(d.memo || '')}</textarea></div>
+    ${formButtons('maintenance', !!e)}
+  </form>
+  ${listHeader('maintenance', '정비 내역')}
+  ${items || emptyBox('정비 기록이 없습니다')}`;
+}
+
+const VIEWS = { dashboard: viewDashboard, charges: viewCharges, subsidies: viewSubsidies, vehicle: viewVehicle, maintenance: viewMaintenance };
+
+/* ---------- 렌더 ---------- */
+function render() {
+  if (needLogin()) {
+    $('#header').innerHTML = '';
+    $('#nav').classList.add('hidden');
+    $('#view').innerHTML = authView();
+    bindAuth();
+    return;
+  }
+  $('#nav').classList.remove('hidden');
+  renderHeader();
+  $('#view').innerHTML = VIEWS[ui.tab]();
+  renderNav();
+  bindForms();
+}
+
+/* ---------- 폼 바인딩 ---------- */
+function bindForms() {
+  // 날짜 → 월 자동 추출
+  const monthMap = { charges: '#c-month', subsidies: '#s-month', maintenance: '#m-month' };
+  for (const k in monthMap) {
+    const f = $('#f-' + k);
+    if (!f) continue;
+    f.elements.date.addEventListener('change', ev => { $(monthMap[k]).value = ev.target.value.slice(0, 7); });
+    f.addEventListener('submit', ev => { ev.preventDefault(); submitLog(k, f); });
+  }
+  // 평균 단가 자동 계산
+  const kwh = $('#c-kwh'), amt = $('#c-amount'), unit = $('#c-unit');
+  if (kwh && amt && unit) {
+    const calc = () => { const k = parseFloat(kwh.value), a = parseFloat(amt.value); unit.value = k > 0 && a >= 0 ? fmt(Math.round(a / k * 10) / 10, 1) : ''; };
+    kwh.addEventListener('input', calc); amt.addEventListener('input', calc);
+  }
+  const fv = $('#f-vehicle');
+  if (fv) fv.addEventListener('submit', ev => { ev.preventDefault(); submitVehicle(fv); });
+}
+
+function upsert(k, rec) {
+  const i = state[k].findIndex(r => r.id === rec.id);
+  if (i >= 0) state[k][i] = rec; else state[k].push(rec);
+}
+
+function submitLog(k, form) {
+  const fd = new FormData(form);
+  const date = fd.get('date');
+  const amount = Number(fd.get('amount'));
+  if (!date) return toast('날짜를 선택해 주세요', true);
+  if (!(amount > 0)) return toast('금액을 입력해 주세요', true);
+  const rec = { date, month: date.slice(0, 7), amount };
+  if (k === 'charges') {
+    const kwh = Number(fd.get('kwh'));
+    if (!(kwh > 0)) return toast('충전량을 입력해 주세요', true);
+    Object.assign(rec, {
+      station: (fd.get('station') || '').trim(), company: (fd.get('company') || '').trim(),
+      type: fd.get('type'), kwh, unitPrice: Math.round(amount / kwh * 10) / 10
+    });
+  } else if (k === 'subsidies') {
+    Object.assign(rec, { description: (fd.get('description') || '').trim(), type: fd.get('type') });
+  } else {
+    Object.assign(rec, { category: fd.get('category'), memo: (fd.get('memo') || '').trim() });
+  }
+  const id = ui.editing[k];
+  rec.id = id || uid();
+  run(async () => {
+    await apiPost({ action: id ? 'update' : 'add', sheet: k, data: rec });
+    upsert(k, rec);
+    ui.editing[k] = null;
+  }, id ? '수정했어요' : '저장했어요');
+}
+
+function submitVehicle(form) {
+  const fd = new FormData(form);
+  const v = {
+    id: 'main',
+    name: (fd.get('name') || '').trim(), grade: (fd.get('grade') || '').trim(),
+    plate: (fd.get('plate') || '').trim(), purchaseDate: fd.get('purchaseDate') || '',
+    battery: Number(fd.get('battery')) || 0
+  };
+  if (!v.name) return toast('차량명을 입력해 주세요', true);
+  run(async () => {
+    await apiPost({ action: 'saveVehicle', sheet: 'vehicle', data: v });
+    state.vehicle = v;
+  }, '차량 정보를 저장했어요');
+}
+
+/* ---------- 이벤트 위임 ---------- */
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-act]');
+  if (!el) return;
+  const { act, k, id, tab, mode } = el.dataset;
+  if (act === 'tab')    { ui.tab = tab; render(); window.scrollTo(0, 0); }
+  else if (act === 'reload') loadAll();
+  else if (act === 'authmode') { ui.authMode = mode; render(); }
+  else if (act === 'logout') { if (confirm('로그아웃할까요?')) { clearSession(); render(); } }
+  else if (act === 'report') {
+    const scope = el.dataset.scope;
+    run(async () => { await apiPost({ action: 'sendReport', scope, month: ui.month }); }, (USER && USER.email ? USER.email + ' (으)로 ' : '') + '자료를 보냈어요');
+  }
+  else if (act === 'mprev' || act === 'mnext') {
+    const [y, m] = ui.month.split('-').map(Number);
+    const d = new Date(y, m - 1 + (act === 'mnext' ? 1 : -1), 1);
+    ui.month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    render();
+  }
+  else if (act === 'fltclear') { ui.filter[k] = ''; render(); }
+  else if (act === 'edit')   { ui.editing[k] = id; render(); window.scrollTo(0, 0); }
+  else if (act === 'cancel') { ui.editing[k] = null; render(); }
+  else if (act === 'del') {
+    if (!confirm('이 기록을 삭제할까요?')) return;
+    run(async () => {
+      await apiPost({ action: 'delete', sheet: k, id });
+      state[k] = state[k].filter(r => r.id !== id);
+      if (ui.editing[k] === id) ui.editing[k] = null;
+    }, '삭제했어요');
+  }
+});
+document.addEventListener('change', ev => {
+  if (ev.target.id === 'dash-month' && ev.target.value) { ui.month = ev.target.value; render(); }
+  else if (ev.target.id && ev.target.id.startsWith('flt-')) { ui.filter[ev.target.id.slice(4)] = ev.target.value; render(); }
+});
+
+loadAll();
+</script>
+</body>
+</html>
